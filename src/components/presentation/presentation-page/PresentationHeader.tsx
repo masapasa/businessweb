@@ -10,6 +10,7 @@ import { ThemeSelector } from "../theme/ThemeSelector";
 import { ShareButton } from "./buttons/ShareButton";
 import { PresentButton } from "./buttons/PresentButton";
 import { SaveStatus } from "./buttons/SaveStatus";
+import { DownloadPPT } from "./buttons/DownloadPPT";
 import { Brain } from "@/components/ui/icons";
 import SideBarDropdown from "@/components/auth/Dropdown";
 
@@ -62,6 +63,9 @@ export default function PresentationHeader({ title }: PresentationHeaderProps) {
 
         {/* User profile dropdown - Keep this on all pages */}
         {!isPresenting && <SideBarDropdown />}
+
+        {/* Download button - Only in presentation page, not outline */}
+        {isPresentationPage && <DownloadPPT />}
       </div>
     </header>
   );
