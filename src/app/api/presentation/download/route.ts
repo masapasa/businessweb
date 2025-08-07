@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
+import { db } from "@/server/db";
 import {
   themes,
   type ThemeName,
   type ThemeProperties,
 } from "@/lib/presentation/themes";
+import { type PlateSlide } from "@/components/presentation/utils/parser";
 
 // Define the structure for a slide element
 interface SlideElement {
@@ -20,37 +22,6 @@ interface SlideElement {
   level?: number;
   options?: PptxGenJS.TextPropsOptions;
   imagePath?: string; // For images
-}
-
-// Define the structure for a single slide
-interface SlideData {
-  id: string;
-  content: ContentBlock[];
-  layoutType?: "left" | "right" | "center" | "top" | "bottom" | "custom";
-  alignment?: "start" | "center" | "end";
-  rootImage?: {
-    url: string;
-    query?: string;
-  };
-  layout?: {
-    name: string;
-    elements: Partial<Record<SlideElement["type"], PptxGenJS.TextPropsOptions>>;
-  };
-  elements?: SlideElement[]; // Use a more structured elements format
-  theme?: Theme;
-}
-
-// Define the structure for a content block within a slide
-interface ContentBlock {
-  type: string;
-  children: TextNode[];
-}
-
-// Define the structure for a text node within a content block
-interface TextNode {
-  text: string;
-  bold?: boolean;
-  italic?: boolean;
 }
 
 // Define the structure for theme properties
@@ -72,7 +43,7 @@ function resolveTheme(
   if (typeof themeData === "string") {
     const themeName = themeData as ThemeName;
     if (themes[themeName]) {
-      return { name: themeName, properties: themes[themeName].properties };
+      return { name: themeName, properties: themes[themeName] };
     }
   }
   return null;
@@ -81,31 +52,48 @@ function resolveTheme(
 // Main function to handle the POST request
 export async function POST(req: Request) {
   try {
-    const { sections, theme: themeData } = await req.json();
+    const { id } = await req.json();
 
-    if (!sections || !Array.isArray(sections) || sections.length === 0) {
+    if (!id) {
       return NextResponse.json(
-        { error: "Invalid or missing sections data" },
+        { error: "Invalid or missing presentation ID" },
         { status: 400 }
+      );
+    }
+
+    const presentation = await db.baseDocument.findUnique({
+      where: { id },
+      include: {
+        presentation: true,
+      },
+    });
+
+    if (!presentation?.presentation) {
+      return NextResponse.json(
+        { error: "Presentation not found" },
+        { status: 404 }
       );
     }
 
     const pptx = new PptxGenJS();
     pptx.layout = "LAYOUT_16x9";
-    const defaultTheme = {
-      name: "Default",
-      properties: themes.Default.properties,
+
+    const theme = resolveTheme(presentation.presentation.theme) ?? {
+      name: "daktilo",
+      properties: themes.daktilo,
     };
 
-    for (const section of sections) {
-      const theme = resolveTheme(themeData) ?? defaultTheme;
+    const slides = (presentation.presentation.content as { slides: PlateSlide[] })
+      .slides;
+
+    for (const slideData of slides) {
       const slide = pptx.addSlide();
-      slide.background = { color: theme.properties.backgroundColor };
-      addSlideContent(slide, section as SlideData, theme);
+      slide.background = { color: theme.properties.colors.light.background };
+      addSlideContent(slide, slideData, theme);
     }
 
     const pptxBuffer = await pptx.write({ outputType: "nodebuffer" });
-    const fileName = "presentation.pptx";
+    const fileName = `${presentation.title || "presentation"}.pptx`;
 
     return new NextResponse(pptxBuffer, {
       status: 200,
@@ -126,59 +114,51 @@ export async function POST(req: Request) {
   }
 }
 
-// More advanced layout engine
+function getStyleForElement(
+  type: SlideElement["type"],
+  theme: Theme,
+): PptxGenJS.TextPropsOptions {
+  const colors = theme.properties.colors.light;
+  const fonts = theme.properties.fonts;
+
+  switch (type) {
+    case "title":
+      return {
+        color: colors.heading,
+        fontFace: fonts.heading,
+        fontSize: 32,
+        bold: true,
+      };
+    case "subtitle":
+      return { color: colors.muted, fontFace: fonts.body, fontSize: 18 };
+    case "headline":
+      return {
+        color: colors.heading,
+        fontFace: fonts.heading,
+        fontSize: 24,
+        bold: true,
+      };
+    case "description":
+      return { color: colors.text, fontFace: fonts.body, fontSize: 14 };
+    case "bullet":
+      return {
+        color: colors.text,
+        fontFace: fonts.body,
+        fontSize: 14,
+        bullet: true,
+      };
+    default:
+      return { color: colors.text, fontFace: fonts.body, fontSize: 14 };
+  }
+}
+
 function addSlideContent(
   slide: PptxGenJS.Slide,
-  section: SlideData,
-  theme: Theme
-) {
-  const elements = section.elements ?? parseElements(section.content);
-
-  // If a custom layout is defined, use it
-  if (section.layoutType === "custom" && section.layout) {
-    addCustomLayout(slide, elements, theme, section.layout);
-    return;
-  }
-
-  // Fallback to default layouts
-  addDefaultLayout(slide, elements, theme, section);
-}
-
-// Function to handle custom layouts
-function addCustomLayout(
-  slide: PptxGenJS.Slide,
-  elements: SlideElement[],
+  slideData: PlateSlide,
   theme: Theme,
-  layout: SlideData["layout"]
 ) {
-  elements.forEach((element) => {
-    const baseStyle =
-      (theme.properties as any)[element.type] ?? theme.properties.text;
-    const layoutStyle = layout?.elements[element.type] ?? {};
+  const elements = parseElements(slideData.children);
 
-    const finalOptions: PptxGenJS.TextPropsOptions = {
-      ...baseStyle,
-      ...layoutStyle,
-      ...element.options, // Individual element styles override everything
-    };
-
-    if (element.type === "image" && element.imagePath) {
-      slide.addImage({
-        path: element.imagePath,
-        ...(finalOptions as PptxGenJS.ImageProps),
-      });
-    } else {
-      slide.addText(element.content, finalOptions);
-    }
-  });
-}
-
-function addDefaultLayout(
-  slide: PptxGenJS.Slide,
-  elements: SlideElement[],
-  theme: Theme,
-  section: SlideData
-) {
   let y = 1.0; // Starting Y position
 
   elements.forEach((element) => {
@@ -187,33 +167,18 @@ function addDefaultLayout(
       y,
       w: "90%",
       h: 0.5,
-      color: theme.properties.text.color, // Default text color
+      ...getStyleForElement(element.type, theme),
+      ...element.options,
     };
 
     switch (element.type) {
       case "title":
-        options = { ...theme.properties.title };
+        options.y = 0.5;
+        options.h = 1;
         break;
       case "subtitle":
-        options = { ...theme.properties.subtitle };
-        break;
-      case "headline":
-        options = {
-          ...theme.properties.text,
-          fontSize: 24,
-          bold: true,
-          ...element.options,
-        };
-        break;
-      case "description":
-        options = { ...theme.properties.text, ...element.options };
-        break;
-      case "bullet":
-        options = {
-          ...theme.properties.bullet,
-          ...element.options,
-          bullet: true,
-        };
+        options.y = 1.5;
+        options.h = 0.75;
         break;
       case "image":
         if (element.imagePath) {
@@ -231,23 +196,13 @@ function addDefaultLayout(
     slide.addText(element.content, options);
     y += 0.6; // Increment Y for the next element
   });
-
-  if (section.rootImage?.url) {
-    slide.addImage({
-      path: section.rootImage.url,
-      x: "70%",
-      y: "20%",
-      w: "25%",
-      h: "60%",
-    });
-  }
 }
 
 // Parse raw content into structured elements
-function parseElements(content: ContentBlock[]): SlideElement[] {
+function parseElements(content: any[]): SlideElement[] {
   const elements: SlideElement[] = [];
   content.forEach((block) => {
-    const text = block.children.map((c) => c.text).join("");
+    const text = block.children.map((c: any) => c.text).join("");
     switch (block.type) {
       case "h1":
         elements.push({ type: "title", content: text });
@@ -263,6 +218,9 @@ function parseElements(content: ContentBlock[]): SlideElement[] {
         break;
       case "bullet":
         elements.push({ type: "bullet", content: text, level: 1 });
+        break;
+      case "img":
+        elements.push({ type: "image", content: "", imagePath: block.url });
         break;
     }
   });
