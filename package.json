@@ -155,6 +155,7 @@
     "react-resizable-panels": "^2.1.7",
     "recharts": "^2.15.1",
     "slate": "^0.103.0",
+    "slate-hyperscript": "^0.100.0",
     "slate-react": "^0.110.3",
     "sonner": "^1.7.2",
     "tailwind-merge": "^2.6.0",

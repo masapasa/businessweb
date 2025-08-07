@@ -8,7 +8,7 @@ import { usePresentationState } from "@/states/presentation-state";
 export function DownloadPPT() {
   const { items } = usePresentationSlides();
   const [loading, setLoading] = useState(false);
-  const { presentationInput } = usePresentationState();
+  const { presentationInput, theme: activeTheme, customThemeData } = usePresentationState();
 
   const handleDownload = async () => {
     setLoading(true);
@@ -16,7 +16,7 @@ export function DownloadPPT() {
       const res = await fetch("/api/presentation/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: presentationInput, items }),
+        body: JSON.stringify({ sections: items, theme: customThemeData ?? activeTheme }),
       });
       if (res.ok) {
         const blob = await res.blob();

@@ -56,9 +56,11 @@ export const PresentationSlidesView = ({
   // Handle showing header on mouse move
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
-      if (event.clientY < 100) {
+      const { shouldShowExitHeader, setShouldShowExitHeader } = usePresentationState.getState();
+      const isMouseAtTop = event.clientY < 100;
+      if (isMouseAtTop && !shouldShowExitHeader) {
         setShouldShowExitHeader(true);
-      } else {
+      } else if (!isMouseAtTop && shouldShowExitHeader) {
         setShouldShowExitHeader(false);
       }
     };
