@@ -8,9 +8,7 @@ import {
 } from "@/lib/presentation/themes";
 import { type TDescendant, type TElement } from "@udecode/plate-common";
 
-// --- START: Type definitions ---
-// These types are based on your project structure to ensure the logic here matches your data.
-
+// --- START: Type definitions from your project ---
 type LayoutType = "left" | "right" | "vertical";
 
 type PlateNode = TElement & {
@@ -32,7 +30,6 @@ type PlateSlide = {
   width?: "L" | "M";
 };
 
-// This is a simplified version of the Theme type from your project
 interface Theme {
   name: string;
   properties: ThemeProperties;
@@ -43,14 +40,6 @@ interface ContentArea {
   y: PptxGenJS.Coord;
   w: PptxGenJS.Coord;
   h: PptxGenJS.Coord;
-}
-
-interface ProcessNodeParams {
-  node: PlateNode;
-  slide: PptxGenJS.Slide;
-  theme: Theme;
-  area: ContentArea;
-  y: number;
 }
 // --- END: Type definitions ---
 
@@ -72,22 +61,27 @@ function resolveTheme(
   return null;
 }
 
-function getRichTextFromNode(node: TElement): PptxGenJS.TextProps[] {
+function getRichTextFromNode(
+  node: TElement,
+  baseOptions: PptxGenJS.TextPropsOptions,
+): PptxGenJS.TextProps[] {
   const richText: PptxGenJS.TextProps[] = [];
 
   function traverse(
     children: TDescendant[],
-    options: PptxGenJS.TextPropsOptions,
+    currentOptions: PptxGenJS.TextPropsOptions,
   ) {
     for (const child of children) {
-      const newOptions: PptxGenJS.TextPropsOptions = { ...options };
-      if ((child as TElement).bold) newOptions.bold = true;
-      if ((child as TElement).italic) newOptions.italic = true;
-      if ((child as TElement).underline) newOptions.underline = true;
-      if ((child as TElement).strikethrough) newOptions.strike = true;
+      const newOptions: PptxGenJS.TextPropsOptions = { ...currentOptions };
+      if ((child as any).bold) newOptions.bold = true;
+      if ((child as any).italic) newOptions.italic = true;
+      if ((child as any).underline) newOptions.underline = true;
+      if ((child as any).strikethrough) newOptions.strike = true;
 
       if ((child as any).text) {
-        richText.push({ text: (child as any).text, options: newOptions });
+        if ((child as any).text.trim()) {
+             richText.push({ text: (child as any).text, options: newOptions });
+        }
       } else if ((child as TElement).children) {
         traverse((child as TElement).children as TDescendant[], newOptions);
       }
@@ -95,7 +89,7 @@ function getRichTextFromNode(node: TElement): PptxGenJS.TextProps[] {
   }
 
   if (node.children) {
-    traverse(node.children as TDescendant[], {});
+    traverse(node.children as TDescendant[], baseOptions);
   }
 
   return richText;
@@ -116,172 +110,103 @@ function getTextNodeStyle(
 
   switch (node.type) {
     case "h1":
-      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 36, bold: true, autoFit: true };
+      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 36, bold: true };
     case "h2":
-      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 28, bold: true, autoFit: true };
+      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 28, bold: true };
     case "h3":
-      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 24, bold: true, autoFit: true };
+      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 24, bold: true };
     case "h4":
-      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 20, bold: true, autoFit: true };
-    case "h5":
-      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 18, autoFit: true };
-    case "h6":
-      return { ...baseOptions, color: colors.muted.replace("#", ""), fontSize: 16, autoFit: true };
+      return { ...baseOptions, color: colors.heading.replace("#", ""), fontFace: fonts.heading, fontSize: 20, bold: true };
     case "p":
-      return { ...baseOptions, fontSize: 14, autoFit: true };
+      return { ...baseOptions, fontSize: 18, lineSpacing: 28 };
     case "bullet":
-        return { ...baseOptions, fontSize: 14, bullet: {type: 'bullet'}, autoFit: true };
+      return { ...baseOptions, fontSize: 16, bullet: {type: 'bullet'} };
     default:
       return baseOptions;
   }
 }
 
-
-function addTextElement(
-  node: PlateNode,
-  slide: PptxGenJS.Slide,
-  theme: Theme,
-  area: ContentArea,
-  y: number,
-  slideData: PlateSlide,
-): number {
-  const richText = getRichTextFromNode(node);
-  if (richText.every(t => !t.text?.trim())) return y;
-
-  const style = getTextNodeStyle(node, theme);
-  const textH = (style.fontSize ?? 14) / 72 * 1.5 * richText.length; // Approximate height
-
-  if (node.type.startsWith('h')) {
-      style.align = 'center';
-  }
-
-  const options: PptxGenJS.TextPropsOptions = {
-      ...style,
-      x: area.x,
-      y: y,
-      w: area.w,
-      h: textH,
-  }
-
-  if (node.type === 'bullet') {
-      options.x = (area.x as number) + 0.25;
-      options.w = (area.w as number) - 0.25;
-  }
-
-  slide.addText(richText, options);
-  return y + textH + 0.1;
-}
-
-function addImageElement(
-  node: PlateNode,
-  slide: PptxGenJS.Slide,
-  area: ContentArea,
-  y: number,
-): number {
-  if (node.url) {
-    const imgH = 2; // Fixed height for inline images
-    slide.addImage({
-      path: node.url,
-      x: area.x,
-      y,
-      w: area.w,
-      h: imgH,
-      sizing: { type: "contain", w: area.w, h: imgH },
-    });
-    return y + imgH + 0.2;
-  }
-  return y;
-}
-
-function addColumnsElement(
+function processNode(
     node: PlateNode,
     slide: PptxGenJS.Slide,
     theme: Theme,
     area: ContentArea,
     y: number,
-    slideData: PlateSlide,
 ): number {
-    const columns = node.children.filter(child => child.type === 'column_item');
-    if (columns.length === 0) return y;
+    const style = getTextNodeStyle(node, theme);
+    const richText = getRichTextFromNode(node, style);
 
-    const colW = ((area.w as number) - (columns.length -1) * 0.2) / columns.length;
-    let maxColY = y;
+    if (!richText.some(t => t.text?.trim())) return y;
+    
+    // Better height estimation
+    const textContent = richText.map(t => t.text).join('');
+    const lineCount = (textContent.match(/\n/g) || []).length + 1;
+    const estimatedHeight = (lineCount * (style.fontSize ?? 16) * 1.5) / 72; // pixels to inches
+    const elemHeight = Math.max(estimatedHeight, 0.5);
 
-    columns.forEach((col, index) => {
-        const colArea: ContentArea = {
-            ...area,
-            x: (area.x as number) + index * (colW + 0.2),
-            w: colW,
-        };
-        let currentYinCol = y;
-        (col.children as PlateNode[]).forEach(childNode => {
-            currentYinCol = processNode({
-                node: childNode,
-                slide,
-                theme,
-                area: colArea,
-                y: currentYinCol,
-                slideData,
+    switch (node.type) {
+        case "h1": case "h2": case "h3": case "h4": case "p":
+            slide.addText(richText, {
+                x: area.x,
+                y: y,
+                w: area.w,
+                h: elemHeight,
+                autoFit: true,
+                align: node.type.startsWith('h') ? 'center' : 'left'
             });
-        });
-        maxColY = Math.max(maxColY, currentYinCol);
-    });
+            return y + elemHeight + 0.1;
 
-    return maxColY + 0.2;
+        case "img":
+            if (node.url) {
+                slide.addImage({ path: node.url, x: area.x, y, w: area.w, h: 2, sizing: { type: 'contain', w: area.w, h: 2 } });
+                return y + 2.2;
+            }
+            return y;
+            
+        case "column":
+            const columns = node.children.filter(child => child.type === 'column_item');
+            if (!columns.length) return y;
+            
+            const colW = ((area.w as number) - (columns.length -1) * 0.2) / columns.length;
+            let maxColY = y;
+
+            columns.forEach((col, index) => {
+                const colArea: ContentArea = {
+                    ...area,
+                    x: (area.x as number) + index * (colW + 0.2),
+                    w: colW,
+                };
+                let currentYinCol = y;
+                (col.children as PlateNode[]).forEach(childNode => {
+                    currentYinCol = processNode(childNode, slide, theme, colArea, currentYinCol);
+                });
+                maxColY = Math.max(maxColY, currentYinCol);
+            });
+            return maxColY + 0.2;
+            
+        case "bullets":
+            let currentYBullets = y;
+            (node.children as PlateNode[]).forEach(childNode => {
+                currentYBullets = processNode(childNode, slide, theme, area, currentYBullets);
+            });
+            return currentYBullets;
+
+        case "bullet":
+            slide.addText(richText, {
+                x: (area.x as number) + 0.25,
+                y,
+                w: (area.w as number) - 0.25,
+                h: elemHeight,
+                autoFit: true,
+                bullet: true
+            });
+            return y + elemHeight + 0.05;
+
+        default:
+            return y;
+    }
 }
 
-function addBulletsElement(
-    node: PlateNode,
-    slide: PptxGenJS.Slide,
-    theme: Theme,
-    area: ContentArea,
-    y: number,
-    slideData: PlateSlide,
-): number {
-    let currentY = y;
-    (node.children as PlateNode[]).forEach(childNode => {
-        currentY = processNode({
-            node: childNode,
-            slide,
-            theme,
-            area,
-            y: currentY,
-            slideData,
-        });
-    });
-    return currentY;
-}
-
-
-function processNode({ node, slide, theme, area, y, slideData }: ProcessNodeParams & { slideData: PlateSlide }): number {
-  switch (node.type) {
-    case 'h1':
-    case 'h2':
-    case 'h3':
-    case 'h4':
-    case 'h5':
-    case 'h6':
-    case 'p':
-        return addTextElement(node, slide, theme, area, y, slideData);
-    case 'img':
-      return addImageElement(node, slide, area, y);
-    case 'column':
-      return addColumnsElement(node, slide, theme, area, y, slideData);
-    case 'bullets':
-        return addBulletsElement(node, slide, theme, area, y, slideData);
-    case 'bullet':
-        // Individual bullets are handled inside `addBulletsElement`'s processNode call.
-        return addTextElement(node, slide, theme, area, y, slideData);
-    case 'chart': // Placeholder for complex elements
-        slide.addText(`[Chart: ${node.chartType}]`, { x: area.x, y, w: area.w, h: 0.5 });
-        return y + 0.6;
-    case 'visualization-list': // Placeholder for complex elements
-        slide.addText(`[Visualization: ${node.visualizationType}]`, { x: area.x, y, w: area.w, h: 0.5 });
-        return y + 0.6;
-    default:
-      return y;
-  }
-}
 
 function addSlideContent(
     pptx: PptxGenJS,
@@ -289,7 +214,7 @@ function addSlideContent(
     slideData: PlateSlide,
     theme: Theme,
 ) {
-  // 16:9 aspect ratio is 10" x 5.625" in pptxgenjs
+  // PptxGenJS 16:9 layout is 10" x 5.625"
   let contentArea: ContentArea = { x: 0.5, y: 0.5, w: 9.0, h: 4.625 };
 
   if (slideData.rootImage?.url) {
@@ -297,39 +222,42 @@ function addSlideContent(
     try {
         switch (slideData.layoutType) {
             case "left":
-              slide.addImage({ path: imagePath, x: 0, y: 0, w: "50%", h: "100%" });
+              slide.addImage({ path: imagePath, x: 0, y: 0, w: "50%", h: "100%", sizing: { type: 'cover', w: '50%', h: '100%'} });
               contentArea = { x: 5.25, y: 0.5, w: 4.5, h: 4.625 };
               break;
             case "right":
-              slide.addImage({ path: imagePath, x: "50%", y: 0, w: "50%", h: "100%" });
+              slide.addImage({ path: imagePath, x: "50%", y: 0, w: "50%", h: "100%", sizing: { type: 'cover', w: '50%', h: '100%'} });
               contentArea = { x: 0.25, y: 0.5, w: 4.5, h: 4.625 };
               break;
             case "vertical":
-              slide.addImage({ path: imagePath, x: 0, y: 0, w: "100%", h: "40%" });
-              contentArea = { x: 0.5, y: 2.35, w: 9.0, h: 2.775 };
+              slide.addImage({ path: imagePath, x: 0, y: 0, w: "100%", h: "50%", sizing: { type: 'cover', w: '100%', h: '50%'} });
+              contentArea = { x: 0.5, y: 3.0, w: 9.0, h: 2.125 };
               break;
-            default:
-              slide.addImage({ path: imagePath, x: 0, y: 0, w: "100%", h: "100%" });
-              slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: '100%', fill: { color: '000000', transparency: 40 } });
+            default: // Full background image with overlay
+              slide.addImage({ path: imagePath, x: 0, y: 0, w: "100%", h: "100%", sizing: { type: 'cover', w: '100%', h: '100%'} });
+              // Add a semi-transparent overlay to ensure text is readable
+              slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: '100%', fill: { color: '000000', transparency: 30 } });
+              // Adjust theme for dark background
+              theme.properties.colors.light.text = "#FFFFFF";
+              theme.properties.colors.light.heading = "#FFFFFF";
               break;
         }
     } catch(e) {
-        console.error("Error adding root image. It might be an invalid URL or path.", e);
-        slide.addText(`[Image not found: ${imagePath}]`, {x: 0, y:0, w: '50%', h: '100%'});
+        console.error(`Error adding root image. It might be an invalid URL or path: ${imagePath}`, e);
+        slide.addText(`[Image not found]`, {x: 0, y:0, w: '50%', h: '100%'});
     }
   }
 
   let currentY = contentArea.y as number;
 
   for (const node of slideData.content) {
-    currentY = processNode({
+    currentY = processNode(
         node,
         slide,
         theme,
-        area: contentArea,
-        y: currentY,
-        slideData
-    });
+        contentArea,
+        currentY,
+    );
   }
 }
 
@@ -360,7 +288,7 @@ export async function POST(req: Request) {
     const pptx = new PptxGenJS();
     pptx.layout = "LAYOUT_16x9";
 
-    const theme = resolveTheme(presentation.presentation.theme) ?? {
+    const baseTheme = resolveTheme(presentation.presentation.theme) ?? {
       name: "daktilo",
       properties: themes.daktilo,
     };
@@ -369,16 +297,31 @@ export async function POST(req: Request) {
     ).slides;
 
     for (const slideData of slides) {
+      // Deep clone the theme for each slide to avoid mutation issues
+      const slideTheme = JSON.parse(JSON.stringify(baseTheme));
       const slide = pptx.addSlide();
-      const themeColors = theme.properties.colors.light;
       
-      let finalBgColor = themeColors.background;
-      if (slideData.bgColor) {
-        finalBgColor = slideData.bgColor;
-      }
+      const themeColors = slideTheme.properties.colors.light;
+      
+      let finalBgColor = slideData.bgColor ?? themeColors.background;
+      
       slide.background = { color: finalBgColor.replace("#", "") };
+      
+      // If the background is dark, we should use light text.
+      // A simple heuristic for darkness.
+      const bgHex = finalBgColor.replace("#", "");
+      const r = parseInt(bgHex.substring(0,2), 16);
+      const g = parseInt(bgHex.substring(2,4), 16);
+      const b = parseInt(bgHex.substring(4,6), 16);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
-      addSlideContent(pptx, slide, slideData, theme);
+      if (luminance < 0.5) {
+          slideTheme.properties.colors.light.text = "#FFFFFF";
+          slideTheme.properties.colors.light.heading = "#FFFFFF";
+          slideTheme.properties.colors.light.muted = "#E5E7EB";
+      }
+
+      addSlideContent(pptx, slide, slideData, slideTheme);
     }
 
     const pptxBuffer = await pptx.write({ outputType: "nodebuffer" });
