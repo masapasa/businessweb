@@ -18,7 +18,7 @@ export type ImageModelList =
 
 export async function generateImageAction(
   prompt: string,
-  model: ImageModelList = "black-forest-labs/FLUX.1-schnell-Free"
+  model: ImageModelList = "black-forest-labs/FLUX.1-schnell"
 ) {
   // Get the current session
   const session = await auth();

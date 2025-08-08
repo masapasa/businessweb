@@ -154,7 +154,7 @@ For each outline point:
 - Add thought-provoking questions
 
 ## CRITICAL RULES
-1. Generate exactly {TOTAL_SLIDES} slides. NOT MORE NOT LESS ! EXACTLY {TOTAL_SLIDES}
+1. Generate EXACTLY {TOTAL_SLIDES} slides - NOT MORE, NOT LESS. If {TOTAL_SLIDES} is 1, generate ONLY ONE slide.
 2. NEVER repeat layouts in consecutive slides
 3. DO NOT copy outline verbatim - expand and enhance
 4. Include at least one detailed image query in most of the slides
@@ -193,12 +193,15 @@ export async function POST(req: Request) {
     const stringOutputParser = new StringOutputParser();
     const chain = RunnableSequence.from([prompt, model, stringOutputParser]);
 
+    // For quick testing, if only one outline item is present, generate exactly one slide
+    const slidesToGenerate = outline.length === 1 ? 1 : outline.length;
+    
     const stream = await chain.stream({
       TITLE: title,
       LANGUAGE: language,
       TONE: tone,
       OUTLINE_FORMATTED: outline.join("\n\n"),
-      TOTAL_SLIDES: outline.length, // +2 for title and conclusion slides
+      TOTAL_SLIDES: slidesToGenerate, 
     });
 
     return LangChainAdapter.toDataStreamResponse(stream);

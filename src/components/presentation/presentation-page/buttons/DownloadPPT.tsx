@@ -8,9 +8,7 @@ import { usePresentationState } from "@/states/presentation-state";
 export function DownloadPPT() {
   const { items } = usePresentationSlides();
   const [loading, setLoading] = useState(false);
-  const { presentationInput, theme: activeTheme, customThemeData } = usePresentationState();
-
-  const id = usePresentationState((state) => state.currentPresentationId);
+  const { presentationInput } = usePresentationState();
 
   const handleDownload = async () => {
     setLoading(true);
@@ -18,14 +16,24 @@ export function DownloadPPT() {
       const res = await fetch("/api/presentation/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ sections: items }),
       });
       if (res.ok) {
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `${presentationInput || "presentation"}.pptx`;
+
+        const contentDisposition = res.headers.get("content-disposition");
+        let fileName = `${presentationInput || "presentation"}.pptx`;
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename="?([^"]+)"?/i);
+          if (match && match[1]) {
+            fileName = match[1];
+          }
+        }
+        link.download = fileName;
+
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
