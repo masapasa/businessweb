@@ -19,6 +19,7 @@ interface SectionData {
   content: ContentBlock[];
   rootImage?: RootImage;
   layoutType?: 'left' | 'right' | 'vertical';
+  alignment?: 'start' | 'center' | 'end';
 }
 
 type ExportTheme = {
@@ -78,40 +79,55 @@ async function imageUrlToBase64(url: string): Promise<string | null> {
 
 function parseContentBlocks(
   contentBlocks: ContentBlock[],
-): { title: string; subtitle: string; body: string } {
+): { title: string; subtitle: string; paragraphs: string[]; bullets: string[] } {
   type Node = { text?: string; type?: string; children?: Node[] };
 
   let title = '';
   let subtitle = '';
-  const bodyParts: string[] = [];
-  const processNode = (node: Node): string => {
-    if (node.text) return node.text;
-    if (node.children) return node.children.map(processNode).join('');
-    return '';
+  const paragraphs: string[] = [];
+  const bullets: string[] = [];
+  const getTextDeep = (node: Node): string => {
+    // Concatenate all text across descendants, preserving line breaks loosely
+    const self = node.text ?? '';
+    const kids = (node.children ?? []).map(getTextDeep).join('');
+    return `${self}${kids}`;
   };
 
-  for (const block of (contentBlocks as unknown as Node[])) {
-    if (block.type === 'h1' && !title) {
-      title = processNode(block);
-    } else if (block.type === 'h2' && !subtitle) {
-      subtitle = processNode(block);
-    } else if (block.type === 'p') {
-      bodyParts.push(processNode(block));
-    } else if (block.type === 'bullets' && Array.isArray(block.children)) {
-      const items = (block.children)
-        .map((bullet) => {
-          const h3 = bullet.children?.find((c) => c.type === 'h3');
-          const p = bullet.children?.find((c) => c.type === 'p');
-          const h3Text = h3 ? processNode(h3) : '';
-          const pText = p ? processNode(p) : '';
-          const combined = [h3Text, pText].filter(Boolean).join('\n  ');
-          return combined ? `• ${combined}` : '';
-        })
-        .filter((s) => s && s.trim().length > 1);
-      if (items.length) bodyParts.push(items.join('\n\n'));
+  const visit = (node: Node) => {
+    const nodeType = (node.type ?? '').toLowerCase();
+    if (nodeType === 'h1' && !title) {
+      title = getTextDeep(node).trim();
+      return;
     }
-  }
-  return { title, subtitle, body: bodyParts.join('\n\n') };
+    if (nodeType === 'h2' && !subtitle) {
+      subtitle = getTextDeep(node).trim();
+      return;
+    }
+    if (nodeType === 'p' || nodeType === 'h3' || nodeType === 'h4') {
+      const p = getTextDeep(node).trim();
+      if (p) paragraphs.push(p);
+      return;
+    }
+    if (nodeType === 'bullets') {
+      // Collect bullet item text; child items can be type 'bullet' or nested containers
+      for (const child of node.children ?? []) {
+        if ((child.type ?? '').toLowerCase() === 'bullet') {
+          const txt = getTextDeep(child).trim();
+          if (txt) bullets.push(txt);
+        } else {
+          // Some generators embed heading/paragraphs directly
+          const txt = getTextDeep(child).trim();
+          if (txt) bullets.push(txt);
+        }
+      }
+      return;
+    }
+    // Recurse into containers (columns, divs, list wrappers, etc.)
+    for (const kid of node.children ?? []) visit(kid);
+  };
+
+  for (const block of (contentBlocks as unknown as Node[])) visit(block);
+  return { title, subtitle, paragraphs, bullets };
 }
 
 // --- Main API Route Handler ---
@@ -143,22 +159,35 @@ export async function POST(req: Request) {
     const slideH = 5.625; // inches
 
     for (const section of pptData.sections) {
-      const { title, subtitle, body } = parseContentBlocks(section.content);
+      const { title, subtitle, paragraphs, bullets } = parseContentBlocks(section.content);
       const slide = pptx.addSlide();
       slide.background = { color: resolved.bg };
 
       const hasImage = Boolean(section.rootImage?.url) && !section.rootImage?.background;
       const layout = section.layoutType ?? 'vertical';
+      const align = ((): 'left' | 'center' | 'right' => {
+        switch (section.alignment) {
+          case 'center':
+            return 'center';
+          case 'end':
+            return 'right';
+          default:
+            return 'left';
+        }
+      })();
 
       if (hasImage) {
         const base64 = await imageUrlToBase64(section.rootImage!.url);
         if (base64) {
           if (layout === 'vertical') {
-            slide.addImage({ data: base64, x: 0, y: 0, w: slideW, h: 3.1 });
+            // Preserve aspect ratio within the top banner area
+            slide.addImage({ data: base64, x: 0, y: 0, w: slideW, h: 3.1, sizing: { type: 'contain', w: slideW, h: 3.1 } as any });
           } else if (layout === 'left') {
-            slide.addImage({ data: base64, x: 0, y: 0, w: 4.5, h: slideH });
+            // Left image column
+            slide.addImage({ data: base64, x: 0, y: 0, w: 4.5, h: slideH, sizing: { type: 'contain', w: 4.5, h: slideH } as any });
           } else {
-            slide.addImage({ data: base64, x: slideW - 4.5, y: 0, w: 4.5, h: slideH });
+            // Right image column
+            slide.addImage({ data: base64, x: slideW - 4.5, y: 0, w: 4.5, h: slideH, sizing: { type: 'contain', w: 4.5, h: slideH } as any });
           }
         }
       }
@@ -173,6 +202,7 @@ export async function POST(req: Request) {
           fontSize: 32,
           bold: true,
           x: 0.6, y: titleY, w: slideW - 1.2, h: 0.8,
+          align,
         });
         if (subtitle) {
           slide.addText(subtitle, {
@@ -180,15 +210,22 @@ export async function POST(req: Request) {
             color: resolved.text,
             fontSize: 20,
             x: 0.6, y: subY, w: slideW - 1.2, h: 0.6,
+            align,
           });
         }
-        if (body) {
-          slide.addText(body, {
-            fontFace: resolved.fontBody,
-            color: resolved.text,
-            fontSize: 18,
-            x: 0.6, y: bodyY, w: slideW - 1.2, h: slideH - bodyY - 0.5,
-          });
+        {
+          const segments: any[] = [];
+          for (const p of paragraphs) segments.push({ text: p + '\n' });
+          for (const b of bullets) segments.push({ text: b, options: { bullet: true } });
+          if (segments.length) {
+            slide.addText(segments as any, {
+              fontFace: resolved.fontBody,
+              color: resolved.text,
+              fontSize: 18,
+              x: 0.6, y: bodyY, w: slideW - 1.2, h: slideH - bodyY - 0.5,
+              align,
+            });
+          }
         }
       } else if (layout === 'left') {
         // Image left, content right
@@ -198,6 +235,7 @@ export async function POST(req: Request) {
           fontSize: 30,
           bold: true,
           x: 4.8, y: 0.6, w: 4.6, h: 0.8,
+          align,
         });
         if (subtitle) {
           slide.addText(subtitle, {
@@ -205,15 +243,22 @@ export async function POST(req: Request) {
             color: resolved.text,
             fontSize: 18,
             x: 4.8, y: 1.4, w: 4.6, h: 0.6,
+            align,
           });
         }
-        if (body) {
-          slide.addText(body, {
-            fontFace: resolved.fontBody,
-            color: resolved.text,
-            fontSize: 16,
-            x: 4.8, y: 2.1, w: 4.6, h: 3.2,
-          });
+        {
+          const segments: any[] = [];
+          for (const p of paragraphs) segments.push({ text: p + '\n' });
+          for (const b of bullets) segments.push({ text: b, options: { bullet: true } });
+          if (segments.length) {
+            slide.addText(segments as any, {
+              fontFace: resolved.fontBody,
+              color: resolved.text,
+              fontSize: 16,
+              x: 4.8, y: 2.1, w: 4.6, h: 3.2,
+              align,
+            });
+          }
         }
       } else {
         // Image right, content left
@@ -223,6 +268,7 @@ export async function POST(req: Request) {
           fontSize: 30,
           bold: true,
           x: 0.6, y: 0.6, w: 4.6, h: 0.8,
+          align,
         });
         if (subtitle) {
           slide.addText(subtitle, {
@@ -230,15 +276,22 @@ export async function POST(req: Request) {
             color: resolved.text,
             fontSize: 18,
             x: 0.6, y: 1.4, w: 4.6, h: 0.6,
+            align,
           });
         }
-        if (body) {
-          slide.addText(body, {
-            fontFace: resolved.fontBody,
-            color: resolved.text,
-            fontSize: 16,
-            x: 0.6, y: 2.1, w: 4.6, h: 3.2,
-          });
+        {
+          const segments: any[] = [];
+          for (const p of paragraphs) segments.push({ text: p + '\n' });
+          for (const b of bullets) segments.push({ text: b, options: { bullet: true } });
+          if (segments.length) {
+            slide.addText(segments as any, {
+              fontFace: resolved.fontBody,
+              color: resolved.text,
+              fontSize: 16,
+              x: 0.6, y: 2.1, w: 4.6, h: 3.2,
+              align,
+            });
+          }
         }
       }
     }
@@ -247,11 +300,15 @@ export async function POST(req: Request) {
     const pptxBuffer = await pptx.write({ outputType: 'nodebuffer' });
     const fileName = `${pptx.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pptx`;
 
-    return new NextResponse(pptxBuffer, {
+    const blob = new Blob([pptxBuffer as any], {
+      type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    });
+
+    return new NextResponse(blob, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+        'Content-Disposition': `attachment; filename="${fileName}"`,
       }
     });
 
